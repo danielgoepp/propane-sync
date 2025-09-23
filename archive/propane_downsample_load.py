@@ -4,6 +4,10 @@ import requests
 import pandas as pd
 from datetime import timezone, datetime, timedelta
 import logging
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure logger
 logging.basicConfig(level=logging.INFO)
@@ -27,15 +31,15 @@ def get_time_chunks(start_time, end_time, chunk_size_days):
 
 if __name__ == "__main__":
 
-    source_url = "https://vmsingle-lt-prod.goepp.net"
-    target_url = "https://vmsingle-lt-prod.goepp.net/api/v2/write"
-    metric_query = "propane_tank_level{db='zigbee'}"
-    metric_name = "propane"
-    start_time = "2024-12-01T00:00:00+00:00"
-    end_time = "2025-01-31T23:59:59+00:00"
-    source_step = "1h"
-    target_step = "1d"
-    chunk_size_days = 7
+    source_url = os.getenv("SOURCE_URL_LT")
+    target_url = f"{os.getenv('TARGET_URL')}/api/v2/write"
+    metric_query = os.getenv("METRIC_QUERY")
+    metric_name = os.getenv("METRIC_NAME")
+    start_time = os.getenv("START_TIME")
+    end_time = os.getenv("END_TIME")
+    source_step = os.getenv("SOURCE_STEP")
+    target_step = os.getenv("TARGET_STEP")
+    chunk_size_days = int(os.getenv("CHUNK_SIZE_DAYS"))
 
     for chunk_start, chunk_end in get_time_chunks(
         start_time, end_time, chunk_size_days

@@ -5,14 +5,18 @@ from datetime import timezone, datetime
 import requests
 import pandas as pd
 import logging
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
 
-    source_url = "https://vms-prod.goepp.net"
-    target_url = "https://vms-prod-lt.goepp.net/"
+    source_url = os.getenv("SOURCE_URL")
+    target_url = os.getenv("TARGET_URL")
 
     logger.info(f"Starting sync at {datetime.now(tz=timezone.utc)}")
 
