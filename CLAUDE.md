@@ -49,7 +49,12 @@ docker build -t propane-sync .
 
 # Run container
 docker run propane-sync
+
+# Build on the dev server and push to GHCR (ghcr.io/danielgoepp/propane-sync)
+./build-and-push.sh
 ```
+
+Images are published to GitHub Container Registry (not Docker Hub), tagged `:latest` and `:<git-short-sha>`. Requires a one-time `docker login ghcr.io -u danielgoepp` with a PAT that has `write:packages`.
 
 ## Configuration Points
 

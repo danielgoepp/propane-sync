@@ -15,8 +15,13 @@ logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
 
-    source_url = os.getenv("SOURCE_URL")
-    target_url = os.getenv("TARGET_URL")
+    missing = [v for v in ("SOURCE_URL", "TARGET_URL") if not os.getenv(v)]
+    if missing:
+        logger.error(f"Required environment variable(s) not set: {', '.join(missing)}")
+        exit(1)
+
+    source_url = os.getenv("SOURCE_URL").rstrip("/")
+    target_url = os.getenv("TARGET_URL").rstrip("/")
 
     logger.info(f"Starting sync at {datetime.now(tz=timezone.utc)}")
 
