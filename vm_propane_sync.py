@@ -37,9 +37,8 @@ if __name__ == "__main__":
             raise Exception(f"Error fetching data: {response.text}")
 
         if not response.json()["data"]["result"]:
-            logger.warning(
-                f"No data found for chunk {datetime.fromtimestamp(chunk_start)} to {datetime.fromtimestamp(chunk_end)}"
-            )
+            logger.error("No existing data found in target; cannot determine sync start time")
+            exit(1)
 
         start_time = int(response.json()["data"]["result"][0]["value"][1]) + 86400
         end_time = (
@@ -54,7 +53,7 @@ if __name__ == "__main__":
             exit(0)
 
         logger.info(
-            f"Processing chunk from {datetime.fromtimestamp(start_time,tz=timezone.utc)} to {datetime.fromtimestamp(end_time,tz=timezone.utc)}"
+            f"Processing from {datetime.fromtimestamp(start_time,tz=timezone.utc)} to {datetime.fromtimestamp(end_time,tz=timezone.utc)}"
         )
 
         try:

@@ -9,7 +9,6 @@ This is a Python-based data synchronization tool for propane tank level monitori
 ## Architecture
 
 - **Main Script**: `vm_propane_sync.py` - Daily sync script designed to run as a cron job
-- **Archive**: `archive/propane_downsample_load.py` - Historical data processing script for bulk operations
 - **Data Flow**: Source VM → Query/Downsample → Target VM (InfluxDB format)
 - **Containerized**: Dockerfile provided for deployment
 
@@ -19,7 +18,7 @@ This is a Python-based data synchronization tool for propane tank level monitori
 - Fetches metrics using VictoriaMetrics HTTP API (`/api/v1/query_range`)
 - Downsamples hourly data to daily averages using pandas
 - Writes data in InfluxDB line protocol format to target instance
-- Includes chunk-based processing for large time ranges
+- Resumes from the last timestamp already present in the target
 
 ### Data Format
 - Source metric: `zigbee_tank_level` or `propane_tank_level{db='zigbee'}`
@@ -32,9 +31,6 @@ This is a Python-based data synchronization tool for propane tank level monitori
 ```bash
 # Main sync script
 python vm_propane_sync.py
-
-# Historical data processing
-python archive/propane_downsample_load.py
 ```
 
 ### Dependencies
@@ -58,12 +54,11 @@ Images are published to GitHub Container Registry (not Docker Hub), tagged `:lat
 
 ## Configuration Points
 
-Both scripts contain hardcoded configuration that may need adjustment:
+The script contains hardcoded configuration that may need adjustment:
 - Source/target URLs
 - Time ranges (start_time, end_time)
 - Metric queries
 - Step intervals (1h source, 1d target)
-- Chunk sizes for processing
 
 ## Data Sources
 
