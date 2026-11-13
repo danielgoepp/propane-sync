@@ -1,110 +1,131 @@
 ## This will downsample the propane_tank_level metric from 1h to 1d and write it to the target VM instance
 ## This is the daily sync script that will be run as a cron job to keep the data in sync
 
-from datetime import timezone, datetime
-import requests
-import pandas as pd
 import logging
 import os
+import sys
+from datetime import datetime, timezone
+
+import pandas as pd
+import requests
 from dotenv import load_dotenv
 
-load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-if __name__ == "__main__":
+REQUEST_TIMEOUT = 30  # seconds
+SOURCE_QUERY = "zigbee_tank_level"
+TARGET_TAGS = "source=sinope,data_source=zigbee"
+# Look back 30d for the last target point; this matches the source's 30-day
+# retention, so a longer gap couldn't be backfilled from the source anyway.
+LAST_POINT_QUERY = (
+    'max(tlast_over_time(propane_tank_level{source="sinope",data_source="zigbee"}[30d]))'
+)
+
+
+def downsample_daily(values):
+    """Downsample [[unix_ts, "value"], ...] (VM query_range format) to daily means rounded to 0.1.
+
+    Days with no samples are dropped rather than returned as NaN.
+    """
+    df = pd.DataFrame(
+        {
+            "timestamp": [v[0] for v in values],
+            "value": [float(v[1]) for v in values],
+        }
+    )
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
+    df.set_index("timestamp", inplace=True)
+
+    downsampled = df.resample("1d").mean().dropna()
+    downsampled["value"] = downsampled["value"].round(1)
+    return downsampled
+
+
+def vm_get(url, params):
+    """GET a VictoriaMetrics query endpoint and return data.result."""
+    response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    return response.json()["data"]["result"]
+
+
+def main():
+    load_dotenv()
+    logging.basicConfig(level=logging.INFO)
 
     missing = [v for v in ("SOURCE_URL", "TARGET_URL") if not os.getenv(v)]
     if missing:
-        logger.error(f"Required environment variable(s) not set: {', '.join(missing)}")
-        exit(1)
+        logger.error("Required environment variable(s) not set: %s", ", ".join(missing))
+        return 1
 
     source_url = os.getenv("SOURCE_URL").rstrip("/")
     target_url = os.getenv("TARGET_URL").rstrip("/")
 
-    logger.info(f"Starting sync at {datetime.now(tz=timezone.utc)}")
+    logger.info("Starting sync at %s", datetime.now(tz=timezone.utc))
 
-    try:
+    result = vm_get(f"{target_url}/api/v1/query", {"query": LAST_POINT_QUERY})
+    if not result:
+        logger.error(
+            "No data found in target within the last 30 days; cannot determine sync start time"
+        )
+        return 1
 
-        params = {
-            "query": "tlast_over_time(propane_tank_level)",
-            "step": "30d",
-        }
-
-        response = requests.get(f"{target_url}/api/v1/query", params=params)
-        if response.status_code != 200:
-            raise Exception(f"Error fetching data: {response.text}")
-
-        if not response.json()["data"]["result"]:
-            logger.error("No existing data found in target; cannot determine sync start time")
-            exit(1)
-
-        start_time = int(response.json()["data"]["result"][0]["value"][1]) + 86400
-        end_time = (
+    start_time = int(float(result[0]["value"][1])) + 86400
+    end_time = (
+        int(
             datetime.now(tz=timezone.utc)
             .replace(hour=0, minute=0, second=0, microsecond=0)
             .timestamp()
-            - 1
         )
+        - 1
+    )
 
-        if start_time > end_time:
-            logger.info(f"No new data to process")
-            exit(0)
+    if start_time > end_time:
+        logger.info("No new data to process")
+        return 0
 
-        logger.info(
-            f"Processing from {datetime.fromtimestamp(start_time,tz=timezone.utc)} to {datetime.fromtimestamp(end_time,tz=timezone.utc)}"
-        )
+    logger.info(
+        "Processing from %s to %s",
+        datetime.fromtimestamp(start_time, tz=timezone.utc),
+        datetime.fromtimestamp(end_time, tz=timezone.utc),
+    )
 
-        try:
-            params = {
-                "query": "zigbee_tank_level",
-                "start": start_time,
-                "end": end_time,
-                "step": "1h",
-            }
+    result = vm_get(
+        f"{source_url}/api/v1/query_range",
+        {"query": SOURCE_QUERY, "start": start_time, "end": end_time, "step": "1h"},
+    )
+    if not result:
+        logger.error("No source data found for the sync window")
+        return 1
+    if len(result) > 1:
+        labels = [r["metric"] for r in result]
+        logger.error("Expected one source series, got %d: %s", len(result), labels)
+        return 1
 
-            response = requests.get(f"{source_url}/api/v1/query_range", params=params)
-            if response.status_code != 200:
-                raise Exception(f"Error fetching data: {response.text}")
+    downsampled = downsample_daily(result[0]["values"])
+    if downsampled.empty:
+        logger.error("Source data produced no daily values")
+        return 1
 
-            if not response.json()["data"]["result"]:
-                logger.warning(f"No data found")
-                exit(1)
+    lines = [
+        f"propane,{TARGET_TAGS} tank_level={row['value']} {index.value}"
+        for index, row in downsampled.iterrows()
+    ]
+    for line in lines:
+        logger.info("Writing: %s", line)
 
-            for result in response.json()["data"]["result"]:
+    response = requests.post(
+        f"{target_url}/api/v2/write", data="\n".join(lines), timeout=REQUEST_TIMEOUT
+    )
+    response.raise_for_status()
 
-                df = pd.DataFrame(
-                    {
-                        "timestamp": [v[0] for v in result["values"]],
-                        "value": [float(v[1]) for v in result["values"]],
-                    }
-                )
+    logger.info("Wrote %d point(s)", len(lines))
+    return 0
 
-                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-                df.set_index("timestamp", inplace=True)
 
-                downsampled = df.resample("1d").mean()
-                downsampled["value"] = df["value"].round(1)
-
-                for index, row in downsampled.iterrows():
-                    timestamp = int(index.timestamp() * 1e9)
-                    value = row["value"]
-                    influx_line = f"propane,source=sinope,data_source=zigbee tank_level={value} {timestamp}"
-                    logger.info(f"Writing: {influx_line}")
-                    try:
-                        response = requests.post(
-                            f"{target_url}/api/v2/write", data=influx_line
-                        )
-                        if response.status_code not in [204, 200]:
-                            logger.error(f"Error writing data: {response.text}")
-                    except Exception as e:
-                        logger.error(f"Exception during write: {str(e)}")
-
-        except Exception as e:
-            logger.error(f"Error processing: {str(e)}")
-            raise e
-
-    except Exception as e:
-        logger.error(f"Error processing: {str(e)}")
-        raise e
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        logger.exception("Sync failed")
+        sys.exit(1)

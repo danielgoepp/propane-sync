@@ -54,14 +54,17 @@ Images are published to GitHub Container Registry (not Docker Hub), tagged `:lat
 
 ## Configuration Points
 
-The script contains hardcoded configuration that may need adjustment:
-- Source/target URLs
-- Time ranges (start_time, end_time)
+Source/target URLs come from the required `SOURCE_URL` and `TARGET_URL` environment variables (or a `.env` file). Everything else is hardcoded in the script:
 - Metric queries
 - Step intervals (1h source, 1d target)
+- Output measurement and tags
+
+The sync window is computed at runtime: from the day after the last point in the target up to the end of yesterday (UTC).
 
 ## Data Sources
 
-- **Source**: VictoriaMetrics instances (vms-prod.goepp.net, vmsingle-lt-prod.goepp.net)
-- **Target**: Same instances with InfluxDB write endpoints
+- **Source**: `https://vms-prod.goepp.net` (short-term, 30-day retention), metric `zigbee_tank_level`
+- **Target**: `https://vms-prod-lt.goepp.net` (long-term, 100-year retention, no dedup), metric `propane_tank_level`, written via `/api/v2/write`
 - **Metrics**: Zigbee-based propane tank level sensors
+
+Because the target has no dedup, writing a timestamp that already exists stores a second value rather than replacing it, and VictoriaMetrics can only delete whole series. Values written before the daily-mean fix are midnight readings, not daily means. The difference is ≤0.4 and the history was intentionally left as is.
