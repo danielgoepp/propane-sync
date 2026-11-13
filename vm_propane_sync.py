@@ -13,6 +13,24 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def downsample_daily(values):
+    """Downsample [[unix_ts, "value"], ...] (VM query_range format) to daily means rounded to 0.1."""
+    df = pd.DataFrame(
+        {
+            "timestamp": [v[0] for v in values],
+            "value": [float(v[1]) for v in values],
+        }
+    )
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
+    df.set_index("timestamp", inplace=True)
+
+    downsampled = df.resample("1d").mean()
+    downsampled["value"] = downsampled["value"].round(1)
+    return downsampled
+
+
 if __name__ == "__main__":
 
     missing = [v for v in ("SOURCE_URL", "TARGET_URL") if not os.getenv(v)]
@@ -74,18 +92,7 @@ if __name__ == "__main__":
 
             for result in response.json()["data"]["result"]:
 
-                df = pd.DataFrame(
-                    {
-                        "timestamp": [v[0] for v in result["values"]],
-                        "value": [float(v[1]) for v in result["values"]],
-                    }
-                )
-
-                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-                df.set_index("timestamp", inplace=True)
-
-                downsampled = df.resample("1d").mean()
-                downsampled["value"] = df["value"].round(1)
+                downsampled = downsample_daily(result["values"])
 
                 for index, row in downsampled.iterrows():
                     timestamp = int(index.timestamp() * 1e9)
